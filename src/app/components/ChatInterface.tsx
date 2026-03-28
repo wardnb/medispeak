@@ -5,6 +5,7 @@ import type { Scenario } from "@/lib/scenarios";
 import { difficultyLabels, difficultyColors } from "@/lib/scenarios";
 import CoachPanel, { type Coaching } from "./CoachPanel";
 import VocabTracker, { type VocabEntry } from "./VocabTracker";
+import { speakText, stopSpeaking, useSpeechRecognition } from "@/lib/speech";
 
 interface Message {
   id: string;
@@ -24,8 +25,47 @@ export default function ChatInterface({ scenario, onBack }: Props) {
   const [loading, setLoading] = useState(false);
   const [vocabOpen, setVocabOpen] = useState(false);
   const [vocab, setVocab] = useState<VocabEntry[]>([]);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const { isListening, transcript, startListening, stopListening, isSupported: sttSupported } =
+    useSpeechRecognition({
+      lang: "es-ES",
+      onResult: (finalText) => {
+        setInput((prev) => (prev ? prev + " " + finalText : finalText));
+      },
+    });
+
+  // Sync interim transcript into input while listening
+  useEffect(() => {
+    if (isListening && transcript) {
+      setInput(transcript);
+    }
+  }, [isListening, transcript]);
+
+  const handleSpeak = useCallback((msgId: string, text: string) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    // If already speaking this message, stop
+    if (speakingId === msgId) {
+      stopSpeaking();
+      setSpeakingId(null);
+      return;
+    }
+
+    stopSpeaking();
+    setSpeakingId(msgId);
+    speakText(text);
+
+    // Reset icon when utterance ends
+    const checkDone = setInterval(() => {
+      if (!window.speechSynthesis.speaking) {
+        setSpeakingId(null);
+        clearInterval(checkDone);
+      }
+    }, 200);
+  }, [speakingId]);
 
   const scrollToBottom = useCallback(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -198,19 +238,42 @@ export default function ChatInterface({ scenario, onBack }: Props) {
               <div
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
-                <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-user-bg text-gray-900 rounded-br-md"
-                      : "bg-patient-bg border border-primary/10 text-gray-900 rounded-bl-md"
-                  }`}
-                >
+                <div className={`flex items-end gap-1.5 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-user-bg text-gray-900 rounded-br-md"
+                        : "bg-patient-bg border border-primary/10 text-gray-900 rounded-bl-md"
+                    }`}
+                  >
+                    {msg.role === "assistant" && (
+                      <span className="text-xs font-medium text-primary block mb-1">
+                        Paciente
+                      </span>
+                    )}
+                    {msg.content}
+                  </div>
                   {msg.role === "assistant" && (
-                    <span className="text-xs font-medium text-primary block mb-1">
-                      Paciente
-                    </span>
+                    <button
+                      onClick={() => handleSpeak(msg.id, msg.content)}
+                      className={`shrink-0 p-1.5 rounded-full transition hover:bg-primary/10 ${
+                        speakingId === msg.id ? "text-primary bg-primary/10" : "text-gray-400 hover:text-primary"
+                      }`}
+                      title={speakingId === msg.id ? "Stop speaking" : "Listen in Spanish"}
+                      aria-label={speakingId === msg.id ? "Stop speaking" : "Listen in Spanish"}
+                    >
+                      {speakingId === msg.id ? (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M6.5 8.5l5-4v15l-5-4H4a1 1 0 01-1-1v-5a1 1 0 011-1h2.5z" />
+                        </svg>
+                      )}
+                    </button>
                   )}
-                  {msg.content}
                 </div>
               </div>
 
@@ -253,6 +316,23 @@ export default function ChatInterface({ scenario, onBack }: Props) {
             className="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 placeholder:text-gray-400"
             disabled={loading}
           />
+          {sttSupported && (
+            <button
+              onClick={isListening ? stopListening : startListening}
+              disabled={loading}
+              className={`rounded-xl px-3 py-2.5 transition shrink-0 ${
+                isListening
+                  ? "bg-red-500 text-white animate-pulse"
+                  : "bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-primary"
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
+              title={isListening ? "Stop recording" : "Speak in Spanish"}
+              aria-label={isListening ? "Stop recording" : "Speak in Spanish"}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3z" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={sendMessage}
             disabled={!input.trim() || loading}
