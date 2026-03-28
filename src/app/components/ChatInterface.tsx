@@ -142,6 +142,17 @@ export default function ChatInterface({ scenario, onBack }: Props) {
 
       setMessages((prev) => [...prev, assistantMsg]);
 
+      // Auto-play patient response via TTS
+      stopSpeaking();
+      setSpeakingId(assistantMsg.id);
+      speakText(data.patientMessage);
+      const checkDone = setInterval(() => {
+        if (typeof window !== "undefined" && !window.speechSynthesis.speaking) {
+          setSpeakingId(null);
+          clearInterval(checkDone);
+        }
+      }, 200);
+
       if (data.coaching?.vocabulary?.length > 0) {
         addVocab(data.coaching.vocabulary);
       }
